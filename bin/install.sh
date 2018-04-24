@@ -444,32 +444,42 @@ get_python2() {
 }
 upgrade_pip() {
     local py="${1:-python}"
+    local pyc="$(get_command "$py")"
+	local dpy="$(dirname $pyc)"
     local pip="${2:-pip}"
-    local pipc="$(get_command $pip)"
+    local pipc="$(get_command "$pip")"
+    local pipo="--ignore-installed --force-reinstall"
+    # force reinstalling pip in same place where it is (not /usr/local but /usr)
+    if (  echo "$dpy" | egrep -q  "^/" );then
+		pipo="$pipo --install-option=--prefix=$(dirname $dpy)"
+	fi
+    if ( [[ -n "$pipc" ]] && ( version_lt "$($pipc --version|awk '{print $2}')" "2.0" ) );then
+        log "Upgrading from legacy pre2 pip"
+        easy_install -U --force-installation-into-system-dir -s "$dpy" pip\
+            && easy_install -U --force-installation-into-system-dir -s "$dpy" six
+        die_in_error "Upgrading legacy pip failed"
+    fi
     if [[ -z "$pipc" ]];then
-        local PIP_URL="https://bootstrap.pypa.io/get-pip.py"
-        local GET_PIP="${GET_PIP-$PIP_URL}"
+        local DEFAULT_PIP_URL="https://bootstrap.pypa.io/get-pip.py"
+        local PIP_URL="${PIP_URL-$DEFAULT_PIP_URL}"
         local PIP_INST="$(mktemp)"
-        if ! ( "$py" -c "import urllib; print urllib.urlopen('$GET_PIP').read()" > "$PIP_INST" );then
+
+        log "Reinstalling pip via $PIP_URL"
+        if ! ( "$py" -c "import urllib; print urllib.urlopen('$PIP_URL').read()" > "$PIP_INST" );then
             log "Error downloading pip installer"
             return 1
         fi
-        "$py" "$PIP_INST"
+        "$py" "$PIP_INST" -U $pipo
         local pipc="$(get_command $pip)"
         if [[ -z "$pipc" ]];then
             log "pip not found"
             return 1
         fi
     fi
-	local dpip="$(dirname $pipc)"
-	local pipo=""
+    local dpip="$(dirname $pipc)"
     log "ReInstalling pip ($pipc) for $py"
-	# force reinstalling pip in same place where it is (not /usr/local but /usr)
-	if ( echo "$dpip" | egrep -q  "^/" );then
-		pipo="--install-option=--install-scripts=$dpip"
-	fi
-    "${py}" "${pipc}" install -U $pipo --ignore-installed --force-reinstall setuptools &&\
-    "${py}" "${pipc}" install -U $pipo --ignore-installed --force-reinstall pip
+    "${py}" "${pipc}" install -U $pipo setuptools &&\
+    "${py}" "${pipc}" install -U $pipo pip
 }
 make_virtualenv() {
     local py=${1:-$(get_python2)}
@@ -1149,7 +1159,7 @@ install_python_libs_() {
             upgrade_pip "$py" "$pip" || sdie "upgrading pip failed"
         fi
         local pip=$(get_cops_pip)
-        if ! ( $pip --version );then
+        if ! ( $pip --version >/dev/null 2>&1 );then
             sdie "pip not found"
         fi
         upgrade_pip "$py" "$pip" &&\
